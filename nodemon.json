@@ -1,0 +1,5 @@
+{
+    "watch": ["."],
+    "ignore": ["tokens/*", "tra_cms/*"],
+    "ext": "js,json"
+  }
