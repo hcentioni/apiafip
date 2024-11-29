@@ -112,11 +112,39 @@ function procesarRespuesta(responseXml) {
             }
 
             try {
+                // Acceso a la respuesta principal
                 const feResponse = result['soap:Envelope']['soap:Body']['FECAESolicitarResponse']['FECAESolicitarResult'];
-                const feCabResp = feResponse.FeCabResp;
-                const detalle = feResponse.FeDetResp?.FECAEDetResponse || {};
 
-                // Estructura base de la respuesta
+                // Verificar si hay errores generales en la respuesta
+                if (feResponse.Errors && feResponse.Errors.Err) {
+                    const errores = Array.isArray(feResponse.Errors.Err)
+                        ? feResponse.Errors.Err
+                        : [feResponse.Errors.Err];
+
+                    return resolve({
+                        success: false,
+                        response: {
+                            cuit: null,
+                            puntoVenta: null,
+                            tipoComprobante: null,
+                            fechaProceso: null,
+                            resultado: null,
+                            reproceso: null,
+                            cae: null,
+                            caeFchVto: null,
+                            detalle: null,
+                            observaciones: [],
+                            errors: errores.map(error => ({
+                                code: error.Code,
+                                message: error.Msg,
+                            })),
+                            events: [],
+                        },
+                    });
+                }
+
+                // Procesar la cabecera de respuesta
+                const feCabResp = feResponse.FeCabResp;
                 const respuesta = {
                     cuit: feCabResp.Cuit || null,
                     puntoVenta: feCabResp.PtoVta || null,
@@ -124,48 +152,83 @@ function procesarRespuesta(responseXml) {
                     fechaProceso: feCabResp.FchProceso || null,
                     resultado: feCabResp.Resultado || null,
                     reproceso: feCabResp.Reproceso || 'N',
-                    nroComprobante: feCabResp.CbteDesde || null,
-                    cae: detalle.CAE || null,
-                    caeFchVto: detalle.CAEFchVto || null,
+                    cae: null,
+                    caeFchVto: null,
+                    detalle: null,
                     errors: [],
                     observaciones: [],
+                    events: [],
                 };
 
+                // Caso exitoso (Resultado === 'A')
                 if (feCabResp.Resultado === 'A') {
-                    // Caso exitoso: CAE y CAEFchVto ya incluidos en la estructura
-                    resolve(respuesta);
-                } else {
-                    // Caso con errores y observaciones
-                    // Manejo de errores
-                    if (feResponse.Errors && feResponse.Errors.Err) {
-                        const errores = Array.isArray(feResponse.Errors.Err)
-                            ? feResponse.Errors.Err
-                            : [feResponse.Errors.Err];
-                        respuesta.errors = errores.map(error => ({
-                            code: error.Code,
-                            message: error.Msg,
-                        }));
-                    }
+                    const detalle = feResponse.FeDetResp.FECAEDetResponse;
+                    respuesta.cae = detalle.CAE;
+                    respuesta.caeFchVto = detalle.CAEFchVto;
 
-                    // Manejo de observaciones
+                    // Agregar detalle completo
+                    respuesta.detalle = {
+                        concepto: detalle.Concepto,
+                        docTipo: detalle.DocTipo,
+                        docNro: detalle.DocNro,
+                        cbteDesde: detalle.CbteDesde,
+                        cbteHasta: detalle.CbteHasta,
+                        cbteFch: detalle.CbteFch,
+                        resultado: detalle.Resultado,
+                    };
+                } 
+                // Caso rechazado (Resultado === 'R') o con observaciones
+                else if (feCabResp.Resultado === 'R') {
+                    const detalle = feResponse.FeDetResp.FECAEDetResponse;
+
+                    // Agregar detalle completo
+                    respuesta.detalle = {
+                        concepto: detalle.Concepto,
+                        docTipo: detalle.DocTipo,
+                        docNro: detalle.DocNro,
+                        cbteDesde: detalle.CbteDesde,
+                        cbteHasta: detalle.CbteHasta,
+                        cbteFch: detalle.CbteFch,
+                        resultado: detalle.Resultado,
+                    };
+
+                    // Procesar observaciones si existen
                     if (detalle.Observaciones && detalle.Observaciones.Obs) {
                         const observaciones = Array.isArray(detalle.Observaciones.Obs)
                             ? detalle.Observaciones.Obs
                             : [detalle.Observaciones.Obs];
+
                         respuesta.observaciones = observaciones.map(obs => ({
                             code: obs.Code,
                             message: obs.Msg,
                         }));
                     }
-
-                    resolve(respuesta);
                 }
+
+                // Procesar eventos si existen
+                if (feResponse.Events && feResponse.Events.Evt) {
+                    const eventos = Array.isArray(feResponse.Events.Evt)
+                        ? feResponse.Events.Evt
+                        : [feResponse.Events.Evt];
+
+                    respuesta.events = eventos.map(evento => ({
+                        code: evento.Code,
+                        message: evento.Msg,
+                    }));
+                }
+
+                resolve({
+                    success: feCabResp.Resultado === 'A',
+                    response: respuesta,
+                });
             } catch (e) {
                 reject('Error al procesar la estructura de respuesta: ' + e.message);
             }
         });
     });
 }
+
+
 
 /**
  * Autoriza una factura con AFIP mediante WSFEV1.
@@ -183,17 +246,20 @@ async function autorizarFactura(FeCabReq, FeDetReq) {
 
         const soapRequest = construirSoapRequest(token, sign, FeCabReq, FeDetReq[0]);
 
-        console.log('soapRequest',soapRequest)
-
+        console.log(soapRequest)
         const response = await axios.post(WSFEV1_URL, soapRequest, {
             headers: {
                 'Content-Type': 'text/xml; charset=utf-8',
                 SOAPAction: 'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
             },
         });
+
+       
+
         return await procesarRespuesta(response.data);
+
     } catch (error) {
-        console.log("Entro por error",error.message)
+
         console.error('Error al autorizar la factura>', error.message);
         throw new Error( error.message);
     }
