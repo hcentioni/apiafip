@@ -246,15 +246,12 @@ async function autorizarFactura(FeCabReq, FeDetReq) {
 
         const soapRequest = construirSoapRequest(token, sign, FeCabReq, FeDetReq[0]);
 
-        console.log(soapRequest)
         const response = await axios.post(WSFEV1_URL, soapRequest, {
             headers: {
                 'Content-Type': 'text/xml; charset=utf-8',
                 SOAPAction: 'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
             },
         });
-
-       
 
         return await procesarRespuesta(response.data);
 
